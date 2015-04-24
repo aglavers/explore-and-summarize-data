@@ -1,0 +1,186 @@
+2012 USA Presidential Election -- Part 1: Data Munging *Only* -- by Andrew Lavers
+===================
+
+Please see separate html report for the full project.
+
+
+This project focuses on the 2012 USA presidential campaign finance data available from
+http://fec.gov/disclosurep/PDownload.do. 
+
+This project uses a *sample* from the [very large full countrywide dataset](ftp://ftp.fec.gov/FEC/Presidential_Map/2016/P00000001/P00000001-ALL.zip) to make analysis manageable. Using sampling rather than a single state data set enables some interesting state comparisons to be made.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+library (reshape2)
+library(plyr)
+library(dplyr)
+library (ggplot2)
+library(lubridate)
+```
+### Munge Process Settings
+
+These settings can be changed to make it easier to test the munge process. The data set  is large
+so we recommend lower settings while exploring.
+```{r munge_setting}
+workdir <- "/Users/alavers/Documents/Udacity/Data Analysis with R/P3/"
+# surce data file 
+file_all    <- paste(workdir,"P00000001-ALL.csv" ,         sep="")
+# number of rows from large file. Changing will invalidate randomness of sample
+file_all_nrow <- -1
+# raw sample file - to avoid resampling the very large file
+file_sample <- paste(workdir, "P00000001-ALL_sampled.csv" ,sep="")
+# munge result 
+file_campaign <- paste(workdir, "campaign_5.csv" ,sep="")
+# samppling settings
+set.seed = 2341767
+sample_size <- 0.05
+setwd(workdir)
+```
+
+### Load  the data 
+
+This data set has rows with a trailing comma on each row. This causes read.csv to make
+assumptions because the header is shorter than the rows by 1. After much struggling
+this Stack overflow link
+http://stackoverflow.com/questions/13239639/duplicate-row-names-error-reading-table-row-names-null-shifts-columns
+gave me the hint. 
+
+The approach to read skips the header by using skip=1, and provides the column names - with one "extra" column -  
+using the col.names attribute.
+
+```{r warning=FALSE, load_data}
+# the file has trailing commas on data rows making the col names short by 1 column
+# So, read column names separately, add one more dummy column column "dummy"
+ln <- readLines(file(file_all), n=1) 
+ln <- paste (ln,'dummy', sep=',')               
+col_names_raw <- unlist(strsplit(ln, ","))
+
+#read csv skipping the first row and supplying the col names
+campaign_raw <- read.csv(file_all, col.names=col_names_raw, header=FALSE, row.names=NULL,
+                         skip=1, nrow=file_all_nrow)
+campaign_sample <- sample_frac(campaign_raw, sample_size)
+write.csv(campaign_sample, file_sample, row.names=FALSE)
+```
+### Check the counts and some sanity checks on the sample vs. full file
+```{r warning=FALSE, echo=FALSE, counts}
+print(paste("Rows read from all file:",nrow(campaign_raw)))
+print(paste("Rows written to sample file:",nrow(campaign_sample)))
+
+# sanity check totals for raw file ...
+rep_count = nrow(subset(campaign_raw, !(cand_nm %in% c('Obama, Barack', 'Stein, Jill'))))
+rep_sum = sum(subset(campaign_raw, !(cand_nm %in% c('Obama, Barack', 'Stein, Jill')), select = contb_receipt_amt))
+tot_count <- nrow(campaign_raw)
+tot_sum <- sum(campaign_raw$contb_receipt_amt)
+print(paste("Republican FULL FILE count%:", 100 * rep_count / tot_count, " sum%: ", 100 * rep_sum / tot_sum))
+summary(campaign_raw[,c('cand_nm','contb_receipt_amt','contbr_st')])
+
+# ... and for sample
+rep_count = nrow(subset(campaign_sample, !(cand_nm %in% c('Obama, Barack', 'Stein, Jill'))))
+rep_sum = sum(subset(campaign_sample, !(cand_nm %in% c('Obama, Barack', 'Stein, Jill')), select = contb_receipt_amt))
+tot_count <- nrow(campaign_sample)
+tot_sum <- sum(campaign_sample$contb_receipt_amt)
+print(paste("Republican SAMPLE count%:", 100 * rep_count / tot_count, ", sum%:", 100 * rep_sum / tot_sum))
+summary(campaign_sample[,c('cand_nm','contb_receipt_amt','contbr_st')])
+```
+Based on the above simple stats the sample appears to be a good representation of the full data set.
+
+### Rerun point
+
+When rerunning we can just run from the sample read to make it quicker
+``` {r rerun_point}
+campaign_sample <- read.csv(file_sample, row.names=NULL)
+```
+### Drop unused columns 
+```{r slice_colums}
+# Slice each dataset by removing unwanted columns
+campaign_tmp1 <- subset(campaign_sample, TRUE,
+                        select = - c(memo_text, receipt_desc, file_num, memo_cd, tran_id, dummy,
+                                     cmte_id, cand_id, form_tp))
+```
+
+### Refunds 
+
+Remove the refunds, which make up about 3-4%. The matching contributions
+should really be backed out as well but hopefully they are spread across the data set
+and wont influence the result. A more rigorous analysis should clear this. With low sampling rate there is almost no chance that both the contribution and refund will be in the same sample. 
+``` {r refunds}
+# total amount of refunds vs total is small so  just drop refunds
+total_refunds  <- sum(subset(campaign_tmp1,contb_receipt_amt <=0,contb_receipt_amt))
+total_contribs <- sum(subset(campaign_tmp1,contb_receipt_amt >0,contb_receipt_amt))
+percent_refunds <- total_refunds / total_contribs 
+print(paste("Refunds:", total_refunds, "Contributions:", total_contribs, "Proportion refunds:", percent_refunds))
+
+campaign_tmp2 <- subset(campaign_tmp1,contb_receipt_amt >0)
+```
+
+### Limit to $2,500, no dates before January 1, 2011, drop Green Party
+
+Investigate excluding large amounts large amounts. They mostly appear to be transfers form other campaign funds and some corrections and company or fund contributions to the $5000 limit.
+Individual limit per candidate is $2500, so lets stick to this subset. Note we use right=T to make the break numbers like 25, 50 land in the previous 
+bucket. There are very few contributions to the green party, so exclude them to
+make the parties comparable,.
+
+```{r eliminate_large_amounts}
+# year month of the date
+campaign_tmp2$contb_receipt_ym<-strftime(dmy(campaign_tmp2$contb_receipt_dt),"%Y-%m")
+
+# limit to $2500 and under and scrub some old dates and filter out the Gree Party (Jill Stein)
+campaign_tmp3 <- subset(campaign_tmp2,contb_receipt_amt <=2500 &
+                        contb_receipt_ym >= '2011-01-01' &
+                        cand_nm != "Stein, Jill")
+summary(campaign_tmp3$contb_receipt_amt)
+```
+
+Clearly there are many small contributions
+
+### Filter States 
+
+There are some odd state codes for the territories and the armed forces and the District of Columbia. 
+We will only analyze the 50 states because these are electoral college states that actively participate in the 
+election of the president.
+
+```{r exclude_some_state_codes}
+states <- c('AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY')
+
+campaign_tmp4 <- subset(campaign_tmp3, contbr_st %in% states)
+campaign_tmp4$contbr_st <- factor(campaign_tmp4$contbr_st)
+```
+
+### Augment with Swing State and Politcal Party
+
+Add 
+- *Swing state*  as sourced from http://elections.nytimes.com/2012/swing-state-tracker 
+
+- *Political party* information from various Wikipedia entries.
+
+- *5-digit zip* from first five of 9-digit zip
+
+- *Year-month* from receipt date to simplify month-by-month plotting
+
+```{r state_columns}
+# augment with swing states
+swing_states = c('IA', 'NH', 'WI', 'FL', 'VA', 'NV', 'OH', 'CO', 'NC')
+campaign_tmp4$swing_st <- campaign_tmp4$contbr_st %in% swing_states
+
+# augment with party information (retrieved from various Wikipedia entries)
+cand_nm <-
+          c("Obama, Barack", "Romney, Mitt", "Bachmann, Michele", "Santorum, Rick", "Paul, Ron", 
+            "Gingrich, Newt", "Perry, Rick", "Cain, Herman","Pawlenty, Timothy", "Huntsman, Jon", 
+            "Johnson, Gary Earl", "Roemer, Charles E. 'Buddy' III", "Stein, Jill", "McCotter, Thaddeus G")
+party <- 
+          c("Democratic", "Republican", "Republican", "Republican", "Republican",
+            "Republican", "Republican", "Republican", "Republican", "Republican",
+            "Republican", "Republican", "Green", "Republican")
+cand_party <- data.frame(cand_nm, party)
+campaign_tmp5 <- merge(campaign_tmp4, cand_party)
+
+# zip 5
+campaign_tmp5$contbr_zip5 <- substr(campaign_tmp5$contbr_zip,start=1, stop=5)
+``` 
+
+### Write the final dataframe to csv file for analysis
+```{r final_data_frame}
+# final base data frame
+campaign <- campaign_tmp5
+write.csv(campaign, file_campaign, row.names=FALSE)
+```
