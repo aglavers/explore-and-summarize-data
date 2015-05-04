@@ -1,5 +1,19 @@
+---
+output:
+  html_document:
+    fig_width: 7
+    fig_height: 5
+---
 2012 US Presidential Election Campaign Contributions – Part 2: by Andrew Lavers
 ========================================================
+
+The 2012 presidential election was on by Barack Obama of the Democratic Party running aginst Mitt Romney of the Republican party. The genrela election followed the earlier primary election phase which was contested in the Republican party. No Democrats contested Obama in a primary for the Democratic nomination.
+
+Campign finance regulations require the recording and publishing of
+campaign contributions. This report describes an analysis of that
+data.
+
+This project uses a *sample* from the [very large full countrywide FTP dataset](ftp://ftp.fec.gov/FEC/Presidential_Map/2016/P00000001/P00000001-ALL.zip) to make analysis manageable. Using sampling rather than a single state data set enables some interesting state comparisons to be made. All data below is reported for the SAMPLE, and has NOT been adjusted for the full dataset
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
 # Load all of the packages that you end up using
@@ -15,12 +29,17 @@ library(plyr)
 library(dplyr)
 library(lubridate)
 library(scales)
+library(gridExtra)
 options(scipen=20)
 workdir <- "/Users/alavers/Documents/Udacity/Data Analysis with R/P3/"
 setwd(workdir)
-file_campaign <- paste(workdir, "campaign_5.csv" ,sep="")
+file_campaign <- paste(workdir, "campaign_5.csv", sep="")
+file_session  <- paste(workdir, "P3Session.Rda",  sep="")
 sample_frac <- 0.05
 sample_perc <- 100*sample_frac
+
+
+# -------- REUSABLE FUNCTIONS AND VARIABLES
 
 # some colors for later
 count_color <- 'goldenrod'
@@ -29,135 +48,315 @@ amt_color <- 'darkgreen'
 amt_alpha <- 0.7
 party_colors <- c('blue', 'red')
 party_alpha <- 0.5
-```
-### Load the data from campaign.csv and look at basic stats
 
-IMPORTANT: This is a `r sample_perc`%  sample from the complete data set. This should be sufficient to represent the full data set but actual totals of contributions will not represent the totals. Any totals reported here have NOT been adjusted for sampling.
+# #modified paired palette to avoid light yellow
+# simply switch the last two pairs (colorbrewer.or)
+paired_palette <- c(
+                     '#1f78b4', '#a6cee3',  
+                     '#33a02c', '#b2df8a',
+                     '#e31a1c', '#fb9a99', 
+                     '#ff7f00', '#fdbf6f',
+                     '#6a3d9a', '#cab2d6',
+                     '#b15928', '#ffff99')
+
+
+# define a commmon date scale formatting
+scale_x_date1 <- scale_x_date (breaks = '3 months', minor_breaks = '1 month',
+                     labels = date_format("%b '%y"),
+                     limits = c(as.Date('2011-01-01'), 
+                                as.Date('2012-11-30') ) )
+scale_x_date_prim <- scale_x_date (breaks = '6 months', minor_breaks = '3 month',
+                     labels = date_format("%b '%y"),
+                     limits = c(as.Date('2011-01-01'), 
+                                as.Date('2012-08-30') ) )
+
+# define labelsc formatter for text yyyy-mm as mmm 'yy
+labels_mmm_yy <- function  (yyyy_mm) {
+  formatted <- strftime(ymd(paste(yyyy_mm, "15", sep="-")), "%b '%y")
+  return (formatted)
+}
+# define breaks for text yyyy-mm 
+breaks_yyyy_mm <- function (yyyy_mm, every=3, ending_at=11) {
+  # break on 3 months, relative to 11 November (the election month)  
+  mm <- as.integer(substr(yyyy_mm, 6, 7))
+  return (ifelse((mm %% every) == (ending_at %% every),
+                  yyyy_mm, 
+                  "") )
+}
+
+# for year month, define a common scale
+scale_x_yyyy_mm = scale_x_discrete(breaks = breaks_yyyy_mm, 
+                                   labels = labels_mmm_yy)
+
+# define common theme tweaks
+theme1 <- theme(title = element_text(vjust = 1.5),
+                axis.title.x = element_text(vjust = -0.5),
+                axis.title.y = element_text(hjust = 0.5) )
+theme_x_state <- theme(axis.text.x = element_text(angle = 90, 
+                                                  vjust = 0.4,
+                                                  size = 8),
+                       panel.grid.major = element_blank())
+
+# define function for primary candidates
+# this is not very robust becaseu it assuems all other are priamry
+isPrimaryCandidate <- function (cand_nm) {
+  return (!(cand_nm %in% c("Obama, Barack","Romney, Mitt")))
+}
+
+# define a function to exclude dates after the primary
+# not very robust becasue it assumes all other dates
+# are prinary
+isPrimaryYm <- function (yyyy_mm) {
+# months in the data that are NOT the primary elections
+  return (!(yyyy_mm %in% c('2012-09', '2012-10', '2012-11', '2012-12')))
+} 
+
+```
+### Load the data 
+IMPORTANT: This is a `r sample_perc`%  sample from the complete data set. 
+This should be sufficient to represent the full data set but actual totals 
+of contributions will not represent the totals. Any totals reported here have 
+NOT been adjusted for sampling.
 
 The data to be loaded is in file *campaign_5.csv*. This is a munged data set based on
 the presidential campaign ALL states data set. The munging is documented in the separate
-AndrewLaversCampainMunge.html produced from AndrewLaversCampainMunge.Rmd
+[file:AndrewLaversCampainMunge.html] produced from [file:AndrewLaversCampainMunge.Rmd]
 
 ```{r echo=FALSE, warning=FALSE, Load_the_Data}
-# Load the Data and set some factors
+# Load the Data 
 campaign <- read.csv(file_campaign, row.names=NULL)
-campaign$party <- factor(campaign$party, levels = c("Democratic","Republican"))
-campaign$swing_st <- factor(campaign$swing_st, levels = c(TRUE, FALSE), 
-                           labels = c("Swing State", "Non-swing State"))
+
+# make a date type from the month text using yyyy-mm-15 - midpoint 
+campaign$contb_receipt_ym_date <- ymd(paste(campaign$contb_receipt_ym, 
+                                            "15", 
+                                            sep = '-'))
+campaign$contb_receipt_dtd <- dmy(campaign$contb_receipt_dt)
+# cutoff in November the election month. There are some contributions
+# in December but they are small and distort the charts
+
+campaign <- subset(campaign, contb_receipt_dtd < ymd('2012-12-01'))
+
+# factors
+campaign$party <- factor(campaign$party, 
+                         levels = c("Democratic","Republican"))
+campaign$swing_st <- factor(campaign$swing_st, 
+                            levels = c(TRUE, FALSE), 
+                            labels = c("Swing State", "Non-swing State"))
 amt_breaks <- c(0, 25, 50, 100, 250, 1000, 2500)
 campaign$contb_receipt_amt_category <- cut(campaign$contb_receipt_amt, 
                     breaks=amt_breaks,
-                    labels=c('(0,25]', '(25,50]', '(50,100]', '(100,250]', '(250,1000]', '(1000,2500]') )
+                    labels=c('(0,25]',    '(25,50]',    '(50,100]', 
+                             '(100,250]', '(250,1000]', '(1000,2500]') )
 
-campaign$contb_receipt_dtd <- dmy(campaign$contb_receipt_dt)
 print (paste ("Analyzing ", nrow(campaign), "rows from", file_campaign))
 ```
+
+----------------------------------
+
 # Univariate Plots Section
 
-#### Contribution Amounts
+### Contribution Amounts
 
-Investigate contribution amounts and establish a category.
+Investigate contribution amounts and establish a category that will
+make analysis of contributions more consistent.
 
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots1a}
 # histogram of amount
-ggplot(campaign, aes(x=contb_receipt_amt)) +
-  stat_bin(breaks=seq(0,2500,25), right=T, fill = amt_color, alpha = amt_alpha) +
-  scale_x_continuous(breaks=seq(0,2500,200)) +
-  scale_y_sqrt(breaks=c(100,1000,5000,10000,50000)) +
-  labs(title="Histogram of Contribution Amounts")
+ggplot(campaign, 
+       aes(x = contb_receipt_amt)) +
+  stat_bin(breaks = seq(0,2500,25), 
+           right = T, 
+           fill = amt_color, 
+           alpha = amt_alpha) +
+  scale_x_continuous(breaks = seq(0,2500,200)) +
+  scale_y_sqrt(breaks = c(100,1000,5000,10000,50000)) +
+  labs(title="Histogram of Contribution Amounts",
+       x = "Contribution Amount in $",
+       y = "Count") +
+  theme1
 ```
 
-At first thought, contribution amount is a continuous variable, but in reality there are very distinct buckets that show in the chart as spikes at 25, 50 100, 250, 500, 1000, 1500, 2000, 2500.
-
-Clearly there are many small contributions, which is confirmed by the following basic statistics of the contribution amount.
+  At first thought, contribution amount is a continuous variable, but in 
+  reality there are very distinct buckets that show in the chart as spikes 
+  at 25, 50 100, 250, 500, 1000, 1500, 2000, 2500.
+  
+  
+  Clearly there are many small contributions, which is confirmed by the 
+  following basic statistics of the contribution amount.
 
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots1b}
 summary (campaign$contb_receipt_amt)
 ```
-Based on the above chart and some experimentation encode the distinct buckets as a new category variable named *contb_receipt_amt_category*, with the following levels.
+
+  Based on the above chart and some experimentation, 
+  the contribution was encoded in the distinct 
+  buckets as a new category variable named *contb_receipt_amt_category*.
+  
+The levels of this new category valriable can be clearly seen in the followign chart:
+
 ```{r echo=FALSE, warning=FALSE, encode_buckets}
-levels(campaign$contb_receipt_amt_category )
-ggplot(campaign, aes(x=contb_receipt_amt_category)) +
+ggplot(campaign, 
+       aes(x=contb_receipt_amt_category)) +
   scale_x_discrete() +
-  geom_histogram(fill=count_color, alpha=count_alpha ) +
-  labs(title="Contribution Counts by Contribution Amount Categories")
+  geom_histogram(fill = count_color, 
+                 alpha = count_alpha ) +
+  labs(title="Contribution Counts by Contribution Amount Category",
+       x = "Contribution Amount Category in $",
+       y = "Count") +
+  theme1
 
 ```
-
-After some experimentation the above buckets produced the expected falling counts by increase in contribution amount. As is expected, the number of contributors declines as the contribution amount increases which reflects the overall country wealth demographics. 
+  
+  After some experimentation the above buckets produced the expected 
+  falling counts by increase in contribution amount. As is expected, 
+  the number of contributors declines as the contribution amount 
+  increases which reflects the overall country wealth demographics. 
+  
+----
 
 ### Contributions by Candidate
 
+A basic look at the difference by candidate.
+
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots2}
 # histogram by candidate
-ggplot(campaign, aes(x = reorder(cand_nm, cand_nm, length)))  +
-  geom_histogram(fill = count_color, alpha = count_alpha) +
-  theme(axis.text.x = element_text(angle=30)) +
-  labs(x = "Candidate", title="Contribution Counts by Candidate") +
-  coord_flip()
+ggplot(campaign, 
+       aes(x = reorder(cand_nm, cand_nm, length)))  +
+  geom_histogram(fill = count_color, 
+                 alpha = count_alpha) +
+  scale_y_log10() +
+  labs(x = "Candidate", 
+       y = "Contribution Count",
+       title="Contribution Counts by Candidate") +
+  coord_flip() +
+  theme1
 ```
 
-In the above chart, the two final presidential candidates for the general election are orders of magnitude greater than the primary candidates, so further analysis of the primary candidates is not likely to be that interesting.
+  In the above chart, the two final presidential candidates for the 
+  general election are orders of magnitude greater than the primary 
+  candidates, so further analysis of the primary candidates is not 
+  likely to be that interesting.
+
+----
 
 ### Contributions over time
 
+Every contribution in the data set has the date of the contribution so
+we can do some analysis of the contributions over time. 
+
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots3}
 # histogram by year-month
-ggplot(campaign, aes(x=contb_receipt_ym)) +
-  stat_bin(breaks=seq(0,2500,25), right=T, fill=count_color, alpha=count_alpha) +
-  scale_y_sqrt(breaks = c(100,1000,5000,10000,50000)) +
-  theme(axis.text.x = element_text(angle=90)) +
-  labs(title = "Contribution Counts by Time")
+ggplot(campaign, 
+       aes(x = contb_receipt_ym) ) +
+  geom_bar(
+           fill = count_color, 
+           alpha = count_alpha) +
+  scale_y_sqrt(breaks = c(100,1000,5000,10000,20000,40000,80000)) +
+  scale_x_yyyy_mm +
+  labs(title = "Contribution Counts by Time",
+       x = "Year - Month",
+       y = "Count") +
+  theme1
 ```
 
-Contributions accelerate approaching the early November election date, as can be seen in the above chart. It will be interesting to see the different pace of Republican versus Democratic contributions. 
+  Contributions accelerate approaching the early November election date,
+  as can be seen in the above chart. It will be interesting to see the 
+  different pace of Republican versus Democratic contributions. 
+
+----
 
 ### Contributions by State
 
+States are an important factor in the presidential election because
+of the way the Electoral College of state representatives actually
+elects the president.
+
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots4}
-# histogram by state
-# using a very hacky way of ordering by count - there's gotta  be a better way!!!
-ggplot(campaign, aes(x=reorder(contbr_st, contbr_st, length ))) +
-  geom_histogram(fill = count_color, alpha = count_alpha) +
-  theme(axis.text.x = element_text(angle = 90, vjust=0.4)) +
-  labs(x = "State") +
-  labs(title = "Contribution Counts by State")
+# histogram by state using a very hacky way of 
+# ordering by count - there's gotta  be a better way!!!
+ggplot(campaign, 
+       aes(x=reorder(contbr_st, contbr_st, length ))) +
+  geom_histogram(fill = count_color, 
+                 alpha = count_alpha) +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(title = "Contribution Counts by State",
+       x = "State",
+       y = "Count") +
+  theme_x_state +
+  theme(panel.grid.major.x = element_blank()) +
+  theme1
 ```
+  
+  The above counts by state show a few large states as frequent 
+  contributors. 
 
-The above counts by state show a few large states as frequent contributors.
+Swing states are important because the president is elected through 
+the Electoral College. States that are evenly split between the parties 
+can "swing" the election because they vote all their Electoral votes 
+based on the results with in the estates. See 
+[2012 swing states](http://elections.nytimes.com/2012/swing-state-tracker)
 
-### Contributions by Party
-
-``` {r echo=FALSE, warning=FALSE, Univariate_Plots5}
-# counts by party
-ggplot(campaign, aes(x=party, fill=party)) +
-  geom_histogram(width=0.3, alpha=party_alpha) +
-  labs(x = "Party", title = "Contribution Counts by Political Party") +
-  scale_fill_manual(values=party_colors)
-```
-
-The counts by party above are substantially different. We should later investigate the relative size and number of contribution by party. 
-
-### Contributions by Swing State
 
 ``` {r echo=FALSE, warning=FALSE, Univariate_Plots6}
 # counts by swing state
-ggplot(campaign, aes(x=swing_st)) +
-  geom_histogram(fill = count_color, alpha=count_alpha) +
-  labs(x = "Swing vs Non-Swing State")
+ggplot(campaign, 
+       aes(x=swing_st)) +
+  geom_histogram(fill = count_color, 
+                 alpha = count_alpha,
+                 width = 0.3) +
+  labs(title = "Contribution Counts by Swing vs Non-Swing State",
+       x = "",
+       y = "Count") +
+  theme1 +
+  theme(legend.position = 'none',
+        panel.grid.major.x = element_blank())
+
 ```
 
-While the above chart shows that there are substantial differences in contributions when comparing Swing States to Non-swing states, the overall state populations are most likely masking the effect. Very populous states such as NY, CA and TX are not swing states.
+  While the above chart shows that there are substantial differences 
+  in contributions when comparing Swing States to Non-swing states, 
+  the overall state populations are most likely masking the effect. 
+  Very populous states such as NY, CA and TX are not swing states.
+
+----
+
+### Contributions by Party
+
+A basic investigation of party differences.
+
+``` {r echo=FALSE, warning=FALSE, Univariate_Plots5}
+# counts by party
+ggplot(campaign, 
+       aes(x=party, 
+           fill=party)) +
+  geom_histogram(width=0.3, 
+                 alpha=party_alpha) +
+  scale_fill_manual(values=party_colors) +
+  labs(title = "Contribution Counts by Political Party",
+       x = "Party", 
+       y = "Count") +
+  theme1 +
+  theme(legend.position = 'none',
+        panel.grid.major.x = element_blank())
+```
+
+  The counts by party above are substantially different. We should later
+  investigate the relative size and number of contribution by party. 
+
+----
 
 # Univariate Analysis
 
 ### What is the structure of your dataset?
 
-The data set to analyze has individual contributions to 2012 presidential candidates. Each contribution has:
+The data set to analyze has individual contributions to 2012 presidential 
+candidates. Each contribution has:
 
 - *Contributor* - Name and address
 
-- *Contributor* -  Occupation (Not useful because it isn't normalized. Many different equivalent. There may be a few interesting high-frequency common items like LAWYER, PHYSICIAN)
+- *Contributor* -  Occupation (Not useful because it isn't normalized. 
+Many different equivalent. There may be a few interesting high-frequency 
+common items like LAWYER, PHYSICIAN)
 
 - *Contribution* -  Date, Year month, amount 
 
@@ -174,39 +373,72 @@ The data set to analyze has individual contributions to 2012 presidential candid
 
 ### What is/are the main feature(s) of interest in your dataset?
 
-- *Individual contribution* - Each individual contribution is represented as a row so the contribution counts 
+- *Individual contribution* - Each individual contribution is represented 
+as a row so the contribution counts 
 
-- *Candidate (cand_nm)* - Obviously the presidential election is about the person that will be president
+- *Candidate (cand_nm)* - Obviously the presidential election is about 
+the person that will be president
 
-- *State (contbr_st)* - In presidential elections, states vote with Electoral college ballots, so votes within a state matter. See for example http://en.Wikipedia.org/wiki/Electoral_College_%28United_States%29. The state identifiers in this data set includes identifiers for non voting territorial possessions (e.g Guam, US Virgin Islands)
+- *State (contbr_st)* - In presidential elections, states vote with Electoral 
+college ballots, so votes within a state matter. See for example 
+http://en.Wikipedia.org/wiki/Electoral_College_%28United_States%29. 
+The state identifiers in this data set includes identifiers for non 
+voting territorial possessions (e.g Guam, US Virgin Islands)
 
-- *Contribution Amount (contb_receipt_amt)* - The is the dollar amount of the contribution is the most interesting item to analyze. This part of the data set was limited to include contribution under the 2012 contribution limit of $2500. There varying reports of whether contributions under $200 must be reported. About half the contributions in this data set are $50 and under. We can analyze the differences and totals of contributions to reach broad conclusions, but these will not represent the full population of contributions.
+- *Contribution Amount (contb_receipt_amt)* - The is the dollar amount 
+of the contribution is the most interesting item to analyze. This part 
+of the data set was limited to include contribution under the 2012 
+contribution limit of $2500. There varying reports of whether contributions 
+under $200 must be reported. About half the contributions in this data set 
+are $50 and under. We can analyze the differences and totals of contributions 
+to reach broad conclusions, but these will not represent the full population 
+of contributions.
 
-### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+### What other features in the dataset do you think will help support your 
+investigation into your feature(s) of interest?
 
-- *Date (contb_receipt_dt, contb_receipt_ym)* - Looking at contributions over time may prove interesting. The Republicans had a large primary field while the Democrats presented a single candidate, the incumbent president. Time may show us when the primary candidates dropped out.
+- *Date (contb_receipt_dt, contb_receipt_ym)* - Looking at contributions 
+over time may prove interesting. The Republicans had a large primary 
+field while the Democrats presented a single candidate, the incumbent 
+president. Time may show us when the primary candidates dropped out.
 
-- *Occupation (contbr_occupation)* - While this may be interesting, the values are not normalized and these cant be effectively compared across
-all occupations. There are a few discrete occupations that may be interesting such as LAWER, PHYSICIAN, TEACHER.
+- *Occupation (contbr_occupation)* - While this may be interesting, 
+the values are not normalized and these cant be effectively compared across
+all occupations. There are a few discrete occupations that may be 
+interesting such as LAWER, PHYSICIAN, TEACHER.
 
-- *Employer (conbr_employer)* - This will be very interesting to find employers with many contributors. However this may be better left for other type of analysis -- visualization with plots may not effectively tease out isolated hot spots. One category appears here "RETIRED", "HOMEMAKER", "UNEMPLOYED", "NOT EMPLOYED" that may be useful for broad categories but there are many "INFORMATION REQUESTED" which indicates missing data.
+- *Employer (conbr_employer)* - This will be very interesting to find 
+employers with many contributors. However this may be better left for 
+other type of analysis -- visualization with plots may not effectively 
+tease out isolated hot spots. One category appears here "RETIRED", 
+"HOMEMAKER", "UNEMPLOYED", "NOT EMPLOYED" that may be useful for broad 
+categories but there are many "INFORMATION REQUESTED" which indicates 
+missing data.
 
 ### Did you create any new variables from existing variables in the dataset?
 
-- *Party (party)* - Party  helps pool the early contributions that went to multiple Republican primary candidates, into two main buckets Republican vs. Democrat. The party value was determined from Wikipedia articles and merged onto the main data set. 
+- *Party (party)* - Party  helps pool the early contributions that went 
+to multiple Republican primary candidates, into two main buckets 
+Republican vs. Democrat. The party value was determined from Wikipedia 
+articles and merged onto the main data set. 
 
-- *Swing State (swing_st)* - In USA presidential elections, the president is actually elected 
-by an Electoral college of state representatives who cast a pre-allocated number of electoral votes on
-behalf of their state. In many 
+- *Swing State (swing_st)* - In USA presidential elections, the 
+president is actually elected 
+by an Electoral college of state representatives who cast a preallocated 
+number of electoral votes on behalf of their state. In many 
 states, the full block of electoral votes must go to the winning 
 candidate in that state. If these states have almost equal Democratic and 
-Republican support, they can be the one state that "swings" the election. In 2012 there 
-were 9 swing states as tracked by the [New York Times](http://elections.nytimes.com/2012/swing-state-tracker)
+Republican support, they can be the one state that "swings" the election. 
+In 2012 there were 9 swing states as tracked by the 
+[New York Times](http://elections.nytimes.com/2012/swing-state-tracker)
 
-- *Categorized Contribution Amount (contb_receipt_amt_category)* - The charts show distinct levels 
-of contribution at these breaks:  $25, $50, $100, $250, $1000, and $2500. A categorized variable was added to facilitate analysis.
+- *Categorized Contribution Amount (contb_receipt_amt_category)* - The 
+charts show distinct levels 
+of contribution at these breaks:  $25, $50, $100, $250, $1000, and $2500. 
+A categorized variable was added to facilitate analysis.
   
-- *Receipt year month (contb_receipt_ym)* - The Year month of the receipt date to simplify trend plotting.
+- *Receipt year month (contb_receipt_ym)* - The Year month of the 
+receipt date to simplify trend plotting.
 
 ### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
 
@@ -214,33 +446,56 @@ For more detail, see the data munging documented  file:AndrewLaversCampaignMunge
 
 The main operations performed where:
 
-- Remove negative values that represent returns. Strictly we should also find the original contribution and remove that as well.  Finding the original is made more difficult by sampling. But since returns make up about 3% of the data set, this was left for a future exercise. Negative return values distort the means and medians
+- Remove negative values that represent returns. Strictly we 
+should also find the original contribution and remove that as well.  
+Finding the original is made more difficult by sampling. But since 
+returns make up about 3% of the data set, this was left for a future 
+exercise. Negative return values distort the means and medians
 
-- Limit to contributions of $2500. This eliminated a few very large party committee transfers, 
-many smaller corporate contributions and leaves a more consistent data set of individual contributions only. 
+- Limit to contributions of $2500. This eliminated a few very 
+large party committee transfers, 
+many smaller corporate contributions and leaves a more consistent 
+data set of individual contributions only. 
 
 - Categorized the contribution amount into buckets
 
-- Eliminate "states" that are territorial possessions etc., that do not form the Electoral College.
+- Eliminate "states" that are territorial possessions etc., 
+that do not form the Electoral College.
 
 - Limit to dates after 1/1/2011
 
 - Eliminate the Green Party because there are very few contributions 
 
+----
+
 # Bivariate Plots Section
 
+### Parties vs. States
+
+Here we look at some of the relationships between parties and states.
+
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots5}
-ggplot(campaign, aes(x=party, y = contb_receipt_amt, fill=party)) +
+ggplot(campaign, 
+       aes(x=party, 
+           y = contb_receipt_amt, 
+           fill=party)) +
   geom_boxplot(alpha=party_alpha) +
-  labs(x = "Party", y = "Contribution Amount in $",
-       title = "Distribution of Contribution Amounts by Political Party\nSwing and Non-swing States") +
-  scale_y_sqrt(breaks=amt_breaks) +
   facet_wrap(~swing_st) +
-  scale_fill_manual(values=party_colors)
+  scale_y_sqrt(breaks=amt_breaks, 
+               expand = c(0,0)) +
+  scale_fill_manual(values=party_colors) +
+  labs(title = "Distribution of Contribution Amounts by Political Party\nSwing and Non-swing States",
+       x = "Party", 
+       y = "Contribution Amount in $") +
+  theme1 +
+  theme(legend.position = 'none')
 ```
 
-As can be seen in the above chart, there is not much difference in individual contribution amounts in Swing or Non-swing states. The median Democratic Swing State contribution of 
-`r median(unlist(subset(campaign, party=="Democratic" & swing_st == "Swing State", select=contb_receipt_amt)))` differs slightly from the 
+As can be seen in the above chart, there is not much difference 
+in individual contribution amounts in Swing or Non-swing states. 
+The median Democratic Swing State contribution of 
+`r median(unlist(subset(campaign, party=="Democratic" & swing_st == "Swing State", select=contb_receipt_amt)))` 
+differs slightly from the 
 `r median(unlist(subset(campaign, party=="Democratic" & swing_st == "Non-swing State", select=contb_receipt_amt)))`
  we find in Non-swing States.
  The Republican median of 
@@ -249,219 +504,394 @@ As can be seen in the above chart, there is not much difference in individual co
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots6}
 # bar of sum by state
-ggplot(campaign, aes(x=reorder(contbr_st, contb_receipt_amt, sum), y=contb_receipt_amt/1E6, fill=swing_st)) +
-  geom_bar(stat='identity', alpha=amt_alpha) +
-  scale_y_sqrt() +
-  labs(x = 'State', y = "Contribution Amount in $ millions", 
-       title="Total Contribution Amount by State") +
-  theme(legend.position='bottom', axis.text.x = element_text(angle = 90, vjust=0.4)) +
-  scale_fill_manual(values=c(amt_color, 'lightgreen'))
+campign_gr_st <- campaign %>% 
+                 group_by(contbr_st, swing_st) %>%
+                 summarize(sum_contb_receipt_amt = sum(contb_receipt_amt))
+ggplot(campign_gr_st, 
+       aes(x = reorder(contbr_st, sum_contb_receipt_amt, sum),        
+           fill = swing_st)) +
+  geom_bar(aes (y = sum_contb_receipt_amt/1E6),
+           stat='identity',  
+           alpha=amt_alpha) +
+  scale_y_sqrt(breaks = pretty_breaks(), expand = c(0,0) ) +
+  scale_fill_manual(values = c(amt_color, 'lightgreen')) +
+  labs(title="Total Contribution Amount by State",
+       x = 'State', 
+       y = "Contribution Amount in $ millions") +
+  theme_x_state +
+  theme(legend.position='bottom', 
+        legend.title = element_blank()) 
 ```
 
-A SQRT scale is needed in the above chart to show the distribution. Clearly the populous states such as NY, CA, TX, FL, and  IL dominate in election contributions.
+A SQRT scale is needed in the above chart to show the distribution. 
+Clearly the populous states such as NY, CA, TX, FL, and  IL 
+dominate in election contributions.
 
-A cursory review of [US State populations](http://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_population) suggests that the above chart corresponds approximately to state populations. Virginia, a swing state, may be an exception being 7th in contributions but only 12th in population.
+A cursory review of 
+[US State populations](http://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_population) 
+suggests that the above chart corresponds approximately 
+to state populations. Virginia, a swing state, may be an exception 
+being 7th in contributions but only 12th in population.
 
-Thus swing states don't seem to make an obvious difference.                     
+Thus swing states don't seem to make an obvious difference.   
+
+----
+
+### Contributions by Candidate
+
+The general election candidates,  Mitt Romney and Barack Obama will
+obviously raise more because they are in the race to the end. 
+These next charts investigate the differences between 
+candidates, first by contribution size and then by total amount.
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots7}
 # boxplot
-ggplot(campaign, aes(x = cand_nm,  y = contb_receipt_amt)) +
+ggplot(campaign, 
+       aes(x = reorder(cand_nm, contb_receipt_amt, sum),  
+           y = contb_receipt_amt)) +
   geom_boxplot() +
   coord_flip() +
-  labs (x="Candidate", y="Contribution Amount", title="Contributions by Candidate")
+  labs (x="Candidate", 
+        y="Per Contribution Amount in $", 
+        title="Contributions by Candidate") + 
+  theme1
 ```
 
-The above chart shows significantly higher median contribution amounts for the primary candidates.  Rick Perry's median of 
+The above chart shows significantly higher median contribution 
+amounts for the primary candidates.  Rick Perry's median of 
  `r median(unlist(subset(campaign, cand_nm == "Perry, Rick", select=contb_receipt_amt)))`
-is similar to that of Timothy Pawlenty and much higher than the rest of the field. Pawlenty has far fewer overall contributions so this similarity here may be deceiving. The difference in distribution between Mitt Romney and Barack Obama can clearly be seen. 
+is similar to that of Timothy Pawlenty and much higher than the 
+rest of the field. Pawlenty has far fewer overall contributions 
+so this similarity here may be deceiving. The difference in 
+distribution between Mitt Romney and Barack Obama can clearly be seen. 
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots8}
 # bars for total amount
-ggplot(campaign, aes(x = cand_nm, y = contb_receipt_amt)) +
-  geom_bar(stat="identity") +
+campaign_cand <- campaign %>% 
+                 group_by (cand_nm) %>%
+                 summarize (sum_contb_receipt_amt = sum(contb_receipt_amt))
+ggplot(campaign_cand, 
+       aes(x = reorder(cand_nm, sum_contb_receipt_amt),
+           y = sum_contb_receipt_amt/1E6)) +
+  geom_bar(stat = "identity") +
+  scale_y_sqrt() +
   coord_flip() +
-  labs(x="Candidate", y="Total Contribution in $",
-       title = "Total Contributions by Candidate")
+  labs(title = "Total Contributions by Candidate",
+       x = "Candidate", 
+       y = "Total Contribution in $ millions" ) +
+theme1
 ```
 
-This result above is interesting to me because I have always wondered how much money was "wasted" during
-primary elections. In the chart you can see that both Mitt Romney and Barack Obama received orders of magnitude  more that the other primary-only candidate. 
+This result above is interesting to me because I have always 
+wondered how much money was "wasted" during
+primary elections. In the chart you can see that both 
+Mitt Romney and Barack Obama received orders of magnitude  
+more that the other primary-only candidate. 
+
+----
+
+### Contributions over time
+
+We will now investigate contributions over time and how they relate to 
+other factors.
+
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots9A}
-#bars for time
-ggplot(campaign, aes(x = contb_receipt_ym, y = contb_receipt_amt)) +
-  theme(axis.text.x = element_text(angle=90)) +
+#bars for total contributions time
+ggplot(campaign, 
+       aes(x = contb_receipt_ym, 
+           y = contb_receipt_amt/1E6)) +
   geom_bar(stat="identity")  +
-  labs(title = "Total Contributions by Month") +
-  facet_wrap(~party)
+  facet_wrap(~party, ncol = 1) +
+  scale_x_yyyy_mm + 
+  labs(title = "Total Contributions by Month",
+       x = "Month",
+       y = "Total Contributions in $millions")  +
+  theme1
+
 ```
 
-In the above  chart contributions accelerate as the election approaches, and stop immediately after. There is distinctly earlier contributions to the Republican Party between 8/20111 and 4/2012. The Democratic Party ends very strong with noticeably higher contributions.
+In the above  chart contributions accelerate as the election 
+approaches, and stop immediately after. There is distinctly earlier 
+contributions to the Republican Party between 8/20111 and 4/2012. 
+The Democratic Party ends very strong with noticeably higher contributions.
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots9B}
-#bars for time
-campaign_party_dt <- campaign %>%
-  filter(contb_receipt_dtd >= ymd("2012-6-1")) %>%
-  group_by (party, contb_receipt_dtd) %>%
-  summarize(sum_amt = sum(contb_receipt_amt),
-            count = n()) %>% 
-  mutate(cumsum_amt = cumsum(sum_amt),
-         cumsum_count = cumsum(count)) 
-
+# get cumulative sums
+campaign_party_dt <-  campaign %>%
+                      filter(contb_receipt_dtd > ymd("2012-05-31")) %>%
+                      group_by (party, contb_receipt_dtd) %>%
+                      summarize(sum_amt = sum(contb_receipt_amt),
+                                count = n()) %>% 
+                      mutate(cumsum_amt   = cumsum(sum_amt),
+                             cumsum_count = cumsum(count)) 
 
 #plot lines for total amounts
-ggplot(campaign_party_dt, aes(x = as.Date(contb_receipt_dtd), y = cumsum_amt/1e6, color=party)) +
-  theme(axis.text.x = element_text(angle=90)) +
+ggplot(campaign_party_dt, 
+       aes(x = as.Date(contb_receipt_dtd), 
+           y = cumsum_amt/1e6, 
+           color=party)) +
   geom_line()  +
-  scale_y_continuous(breaks = seq(0,16, 1)) +
-  scale_x_date(breaks="1 week") +
-  labs(title = "Cumulative Contributions by Week - Period after Primary Election",
-       x = "Date", y = "Cumulative Amount in $Millions") +
-  scale_color_manual(values=party_colors)
+  scale_color_manual(values = party_colors) +
+  scale_y_continuous(breaks = pretty_breaks()) +
+  scale_x_date(breaks = pretty_breaks() ) +
+  labs(title = "Cumulative Contributions\nPeriod after Primary Election",
+       x = "2012", 
+       y = "Cumulative Amount in $Millions") +
+  theme1
+
 ```
 
-In the months after  the primaries, total contributions are similar until September when the Democratic Party jumps ahead by $2million. This lead is then maintained. The Democratic Party convention was held September 3-6, which could be a trigger for this additional contribution. Note that because of sampling at `r sample_perc`% this gain would be about $40 million. 
+In the months after  the primaries, total contributions are 
+similar until September when the Democratic Party jumps ahead by 
+$2million. This lead is then maintained. The Democratic Party 
+convention was held September 3-6, which could be a trigger for 
+this additional contribution. Note that because of sampling at 
+`r sample_perc`% this gain would be about $40 million. 
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots9C}
 #plot lines for counts
-ggplot(campaign_party_dt, aes(x = as.Date(contb_receipt_dtd), y = cumsum_count, color=party)) +
-  theme(axis.text.x = element_text(angle=90)) +
+ggplot(campaign_party_dt, 
+       aes(x = as.Date(contb_receipt_dtd), 
+       y = cumsum_count, 
+       color = party)) +
   geom_line()  +
-  scale_x_date() +
-  labs(title = "Cumulative Contribution Counts by Month - Period after Primary Election") +
-  scale_color_manual(values=party_colors)
-
-
+  scale_color_manual(values=party_colors) +
+  scale_y_continuous(breaks = pretty_breaks()) +
+  scale_x_date(breaks = pretty_breaks() ) +
+  labs(title = "Cumulative Contribution Counts by Month\nPeriod after Primary Election",
+       x = "2012", 
+       y = "Cumulative Contribution Count") + theme1 
 ```
 
-The Democratic Party leads dramatically in number of contributions after the end of the Republican Primaries- more than 100,000 in this `r sample_perc` sample
+The Democratic Party leads dramatically in number of contributions 
+after the end of the Republican Primaries- more than 100,000 
+in this `r sample_perc` sample
 
 ```{r echo=FALSE, warning=FALSE, Bivariate_Plots9D}
 #plot lines for ratio of counts
-campaign_party_dt_counts <- dcast(campaign_party_dt, contb_receipt_dtd ~ party, value.var = 'cumsum_count')
-campaign_party_dt_counts$ratio <- campaign_party_dt_counts$Democratic / campaign_party_dt_counts$Republic
-campaign_party_dt_counts <- subset(campaign_party_dt_counts, !is.na(campaign_party_dt_counts$ratio))
-ggplot(campaign_party_dt_counts, aes(x = as.Date(contb_receipt_dtd), y = ratio)) +
-  theme(axis.text.x = element_text(angle=90)) +
-  geom_smooth()  +
+campaign_party_dt_counts <- dcast(campaign_party_dt, 
+                                  contb_receipt_dtd ~ party, 
+                                  value.var = 'cumsum_count')
+campaign_party_dt_counts$ratio <- campaign_party_dt_counts$Democratic / 
+                                  campaign_party_dt_counts$Republic
+campaign_party_dt_counts <- subset(campaign_party_dt_counts, 
+                                   !is.na(campaign_party_dt_counts$ratio))
+ggplot(campaign_party_dt_counts, 
+       aes(x = as.Date(contb_receipt_dtd), 
+           y = ratio)) +
+  geom_smooth(method = 'loess')  +
   scale_x_date() +
-  labs(title = "Ratio of Cumulative Contribution Counts by Month - Period after Primary Electiony") 
-
-
+  labs(title = "Ratio of Cumulative Contribution Counts by Month\nPeriod after Primary Election",
+       x = "2012", 
+       y = "Ratio Democratic to Republican") +
+  theme1
 ```
 
-IN the above chart the Democratic acceleration is clear with the ratio of cumulative contribution riding rapidly to more than 4:1. 
+In the above chart the Democratic acceleration is clear with the 
+ratio of cumulative contribution rising rapidly to more than 4:1. This
+is perhaps one of the clearest conclusions of the analysis.
+
+----
 
 # Bivariate Analysis
 
 ### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
 
-A clear relationship is between contribution amounts and contribution size which varies by party. The Democratic Party is the clear leader by contribution counts and the Republican party leads in contribution size. As may be expected contributions accelerate closer to the election. An interesting note is the so-called "convention bump". The press and attention around the national convention attracts more interest and contributions. This bump in September 2012 can be clearly seen for the Democratic Party.
+A clear relationship is between contribution amounts and 
+contribution size which varies by party. The Democratic Party 
+is the clear leader by contribution counts and the Republican party 
+leads in contribution size. As may be expected contributions accelerate 
+closer to the election. An interesting note is the so-called 
+"convention bump". The press and attention around the national 
+convention attracts more interest and contributions. This bump 
+in September 2012 can be clearly seen for the Democratic Party.
 
 ### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
 
-There seem to be some similarities between the primary candidates who ultimately dropped out in the primaries. These can be seen in the box plot by candidate above. In particular the contribution size median is much higher suggesting that in order to progress in a primary election, the candidate must be supported by large contributions. In the next section we will explore this further and one of the final plots will show this relationship.
+There seem to be some similarities between the primary candidates who 
+ultimately dropped out in the primaries. These can be seen in the box 
+plot by candidate above. In particular the contribution size median is 
+much higher suggesting that in order to progress in a primary election, 
+the candidate must be supported by large contributions. In the next 
+section we will explore this further and one of the final plots will 
+show this relationship.
 
 ### What was the strongest relationship you found?
 
-The strongest relationship is between party and contribution count and size. Both parties raised similar total amounts.  
-The Democratic Party contribution count was about four times that of the Republican Party. 
+The strongest relationship is between party and contribution count and 
+size. Both parties raised similar total amounts.  
+The Democratic Party contribution count was about four times 
+that of the Republican Party. 
+
+----
 
 # Multivariate Plots Section
 
-#### Contribution by Months
+### Cumulative Contribution by Party 
 
-```{r echo=FALSE, Multivariate_Plots}
+The next charts focus on cumulative sums to investigate the rate of contributions over time. The slope of a cumulative chart indicates the rate of change. 
+
+Firstly, a chart to investigate which contribution size dominated in each party and how that varied over time
+
+```{r echo=FALSE, Multivariate_Plot1}
 # Compare amounts conntributed over time by party (excludign the green party)
-ggplot (campaign, aes(x = contb_receipt_ym, y = contb_receipt_amt_category, size=contb_receipt_amt_category)) +
-  geom_jitter(alpha=0.01) +
-  theme(axis.text.x = element_text(angle=90)) +
-  facet_wrap(~party) +
-  labs (title="Categorized Contribution Amounts by Month")
-```
- 
-The above scatter plot with very low alpha value of 0.01 reveals significant difference between Republican and Democratic donation patterns over time. Despite there only being Republicans in the primaries, these comparisons don't reveal any significant difference over time. The rate that donations increased as the election approached is about the same.  What is strikingly different here is the number of donations from Democrats. The much darker plot on the Democratic side indicates many more contributions than the Republicans. A second key difference is the size of donations by Republications in the last months, that is indicated by the much darker area top right at the $2,500 level. The contribution categories (breaks) are also clearly visible 
-
-#### Cumulative Contribution Amounts
-
-Here we are interested in the rate of contributions, how fast they grew, when they started and when they ended up. We will omit Mitt Romney and Barack Obama because their totals are much greater than the other candidates.
- 
-```{r echo=FALSE, warning=FALSE, Multivariate_Plots2}
-# Create cumulative sums and other stats by candidate by month
-campaign_grouped_nm_ym <- campaign %>% 
-               group_by(cand_nm, contb_receipt_ym) %>%
+campaign_gr_party_ym <- campaign %>% 
+               group_by(party, 
+                        contb_receipt_amt_category, 
+                        contb_receipt_ym_date) %>%
                summarise(
                          sum_amt = sum(contb_receipt_amt), 
                          mean_amt = mean(contb_receipt_amt),
                          median_amt = median(contb_receipt_amt),
                          max_amt = max(contb_receipt_amt),
-                         max_dtd = max(contb_receipt_dtd),
                          count=n()) %>%
-              mutate(cumsum_amt = cumsum(sum_amt))
+               mutate(cumsum_amt = cumsum(sum_amt))
+
+ggplot(campaign_gr_party_ym, 
+      aes(x = as.Date(contb_receipt_ym_date), 
+          y = cumsum_amt/1E6, 
+          color=contb_receipt_amt_category,
+          fill=contb_receipt_amt_category,
+          group=contb_receipt_amt_category)) +
+  geom_area(position = 'stack', alpha = 0.2) +
+  scale_x_date1 +
+  scale_color_discrete (name = "Contribution\nCategory $") +
+  scale_fill_discrete  (name = "Contribution\nCategory $") +
+  facet_wrap(~party, ncol=1)  +
+  labs (title="Categorized Contribution Amounts by Category/Month",
+        x = "", 
+        y = "Total Contribution in $million's") +
+  theme1 + 
+  theme(legend.position = 'bottom')
+```
+ 
+  The above area plot reveals 
+  significant differences between Republican and Democratic donation 
+  patterns over time. The Republican Party reached $10 million in May 2012 
+  with about $6 million coming from the top category. The Democratic Party reached
+  the $10 million mark two months later with almost even contribution totals in 
+  the top three categories.  The Republican chart is dominated by the top 
+  contribution category.
+  
+  Next, we are interested in the rate of contributions, how fast they 
+  grew, when they started and when they ended up. We will omit Mitt 
+  Romney and Barack Obama because their totals are much greater than 
+  the other candidates.
+ 
+```{r echo=FALSE, warning=FALSE, Multivariate_Plots2}
+# Create cumulative sums and other stats by candidate by month
+primary_gr_nm_ym <- campaign %>% 
+               filter(isPrimaryCandidate(cand_nm) &
+                     isPrimaryYm(contb_receipt_ym)) %>%
+               group_by(cand_nm, 
+                        contb_receipt_ym) %>%
+               summarise(sum_amt = sum(contb_receipt_amt), 
+                         mean_amt = mean(contb_receipt_amt),
+                         median_amt = median(contb_receipt_amt),
+                         max_amt = max(contb_receipt_amt),
+                         count=n()) %>%
+               mutate(cumsum_amt = cumsum(sum_amt))
 
 # plot cumulative amounts for primary
-ggplot(subset(campaign_grouped_nm_ym, cand_nm!="Obama, Barack" & cand_nm!="Romney, Mitt")) +
-  theme(axis.text.x = element_text(angle=90)) +
-  geom_line(aes(x = contb_receipt_ym, y = cumsum_amt/1E6, group=cand_nm)) +
+ggplot(primary_gr_nm_ym, ) +
+  geom_line(aes(x = contb_receipt_ym, 
+                y = cumsum_amt/1E6, 
+                group=cand_nm)) +
+  scale_x_yyyy_mm +
   facet_wrap(~cand_nm) +
   scale_color_brewer(palette="Paired") + 
   labs(title = 'Cumulative Contribution Amounts for Primary Election', 
-       x = 'Month', y = 'Contribution in $ millions') 
+       x = 'Month', 
+       y = 'Total Contribution in $millions') +
+  theme1 +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
 ```
 
-The faceted plot above  is interesting because it shows very different shapes for non-starters and those that remained competitive. We will  improve this for the for the final plots
+  The faceted plot above  is interesting because it shows very 
+  different shapes for non-starters and those that remained competitive. 
+  We will  improve this for the for the final plots
 
-#### Contributions by State 
+--- 
 
+### Contribution Size by State 
+
+Does residing in a swing state influence the contribution size? 
+The next charts explores relationships with the state of residence.
 
 ```{r echo=FALSE, warning=FALSE, Multivariate_Plots3}
-ggplot(campaign, aes(x=contbr_st, y=contb_receipt_amt_category, color=swing_st)) +
+ggplot(campaign, 
+       aes(x=contbr_st, 
+       y=contb_receipt_amt_category, 
+       color=swing_st)) +
   geom_jitter(alpha=0.05) +
-  labs(x = "State", y = "Contribution Category",
+  labs(x = "State", 
+       y = "Contribution Category",
        title = "Contribution Size by State") +
-  theme(axis.text.x = element_text(angle=90, vjust=0.4), legend.position = 'bottom') +
-  scale_color_manual(values=c(amt_color, 'lightgreen'))
+  scale_color_manual(values=c(amt_color, 'lightgreen')) +
+  scale_y_discrete(expand=c(0,0)) +
+  # low alpha causes faded legends, so override
+  guides(size = FALSE, 
+         color = guide_legend(override.aes = list(alpha = 1, size=6))) +
+  theme_x_state +
+  theme1 +
+  theme (legend.position = 'bottom',
+         legend.title = element_blank())
+
 ```
 
-There must be some good information in the state and geography data, but plots like this are not very meaningful probably because the variation in state population, and hence the number of contributions per state, dominates. Perhaps it would be better to focus on means and/medians.
+  There must be some good information in the state and geography data, 
+  but plots like this are not very meaningful probably because the
+  variation in state population, and hence the number of contributions 
+  per state, dominates. Perhaps it would be better to focus on 
+  means and/medians.
 
 ```{r echo=FALSE, warning=FALSE, Multivariate_Plots4}
 # create a summary by state with some stats
-campaign_group_st <- campaign %>% 
-    group_by(contbr_st) %>%
-    summarize(swing_st = swing_st[1],
-              sum_amt = sum(contb_receipt_amt),
-              mean_amt = mean(contb_receipt_amt),
-              median_amt = median(contb_receipt_amt),
-              count = n(),
-              st_dem_count = sum(party=="Democratic"),
-              st_rep_count = sum(party=="Republican"),
-              st_lead_count = ifelse(st_dem_count > st_rep_count, "Democratic", "Republican"),
-              st_dem_perc = round(100.0 * st_dem_count / count, 1),
-              st_rep_perc = 100 - st_dem_perc) %>%
-              arrange(st_rep_perc)
-campaign_group_st$st_lead_count <- factor(campaign_group_st$st_lead_count, 
-                                          levels = levels(campaign$party))
-# plot
-ggplot(campaign_group_st, aes(x=reorder(contbr_st, -mean_amt), 
-                              color=st_lead_count)) +
-  geom_point(aes(y=mean_amt)) +
-  geom_point(aes(y=median_amt), shape=2) +
-  scale_y_continuous() +
-  theme(axis.text.x = element_text(angle=90, vjust=0.4), legend.position = 'bottom') +
-  scale_color_manual(values=party_colors) +
-  labs(title = "Means and Medians and Relative Count by State\nColor indicates which party had most contributions", x = "State", y = "Contribution Amount  - Means (dots) and Medians (triangles)")
+campaign_gr_st_mm <- campaign %>% 
+    group_by(contbr_st, party) %>%
+    summarize(Mean   = mean(contb_receipt_amt),
+              Median = median(contb_receipt_amt))
+
+# melt in order to facet the plot by variable
+campaign_gr_st_molten <- melt(campaign_gr_st_mm,
+                              id.vars = c('contbr_st', 'party'))
+
+# plot with states ordered by contribution size
+ggplot(campaign_gr_st_molten, 
+       aes(x = reorder(contbr_st, -value), 
+           shape = variable) ) +
+  geom_point(aes(y = value, 
+                 color=party) ) +
+  scale_color_manual(values = party_colors) +
+  facet_wrap(~party, ncol = 1) +
+  labs(title = "Means and Median Contribution by State", 
+       x = "State", 
+       y = "Per Contribution Amount in $") +
+  theme1 +
+  theme_x_state  + 
+  theme(legend.position = 'bottom',
+        legend.title = element_blank(),
+        panel.grid.major = element_line(color = "white"))
 ```
 
-This chart overwhelmingly shows the broad Democratic base. Only in Utah do Republican Party contributions outnumber those for the Democratic Party. While there is substantial variation in mean contribution size by state, the median is the same in about 80% of all states.
+  This chart overwhelmingly shows the broad Democratic base across all
+  states, because both mean and median are relatively flat and the median 
+  is very close to the median. By contrast The Republican 
+  contribution size mean is substantially higher than the medians, with 
+  substantial variation across the states.
+  
+  
+  While there is substantial variation in mean contribution size by state, 
+  the median is the same in about 80% of all states.
 
+### Occupations
 
-#### Occupations
-
-We will take a look at occupations. And see if there is some relationship. There are 
-`r length(unique(campaign$contbr_occupation))` different occupations listed so let's look at the top 
-occupations by frequency. First a chart of counts, then a chart of amounts.
-
+We will take a look at occupations. And see if there is some relationship. 
+There are 
+`r length(unique(campaign$contbr_occupation))` 
+different occupations listed in this sample so let's look at the top 
+occupations by frequency. First a chart of counts, then a chart of 
+amounts because we have seen these differences before.
 
 ```{r echo=FALSE, warning=FALSE, Multivariate_Plots5A}
 # Find top 30 ocurring occupations (filter missing) and calc the party percentages
@@ -471,8 +901,12 @@ top_occupations <- (campaign %>%
             occ_dem_count = sum(party=="Democratic"),
             occ_rep_count = sum(party=="Republican"),
             occ_sum_amt = sum(contb_receipt_amt),
-            occ_dem_amt = sum(ifelse(party=="Democratic", contb_receipt_amt, 0)),
-            occ_rep_amt = sum(ifelse(party=="Republican", contb_receipt_amt, 0)),
+            occ_dem_amt = sum(ifelse(party=="Democratic", 
+                                     contb_receipt_amt, 
+                                     0)),
+            occ_rep_amt = sum(ifelse(party=="Republican", 
+                                     contb_receipt_amt, 
+                                     0)),
             occ_dem_perc = round(100.0 * occ_dem_count / count, 1),
             occ_rep_perc = 100 - occ_dem_perc) %>%
   arrange(desc(count)) %>%
@@ -481,79 +915,136 @@ top_occupations <- (campaign %>%
   mutate(occupation_rank = row_number())
   ) [1:30,] 
 
-ggplot (top_occupations, aes(x = reorder(contbr_occupation, occ_dem_perc))) + 
- geom_bar(stat='identity', aes(y = occ_rep_perc - occ_dem_perc,
-                               fill = occ_rep_perc > occ_dem_perc) ) +
-  scale_fill_manual(values=party_colors) +
+# plt the relative percentages 
+ggplot (top_occupations, 
+        aes(x = reorder(contbr_occupation, occ_dem_perc))) + 
+  geom_bar(stat='identity', 
+           aes(y = occ_rep_perc - occ_dem_perc,
+              fill = ifelse(occ_rep_perc > occ_dem_perc, 
+                            "Republican", 
+                            "Democratic") ) ) +
+  scale_fill_manual(name = "Party", values = party_colors) +
+  scale_y_continuous(breaks = c(-100.0,  -50.0,  0.0, 50.0,  100.0), 
+                     labels = c( "100%",  "50%", "0", "50%", "100%") ) +
   coord_flip() +
   labs(title = "Election 2012: Percentage difference in Contribution Counts\nTop occupations only",
-       y = "Percentage Difference - Democratic (blue) vs. Republican (red)", x = "") +
-  theme(legend.position='none')
+       y = "Percentage Difference - Democratic vs. Republican", 
+       x = "") +
+  theme1 +
+  theme(legend.position='bottom') +
+  theme(legend.title = element_blank())
 
 ```
 
-The above chart shows the differences in percentage of
-contributions by occupations. Positive percentages are Republican - 
-Negative percentage are Democratic. The occupation order is Democratic favoring to Republican favoring.
+  The above chart shows the differences in percentage of
+  contributions by occupations. Positive percentages are Republican - 
+  Negative percentage are Democratic. The occupation order is 
+  Democratic favoring to Republican favoring.
+  
+Next, contribution amounts
+
 ```{r echo=FALSE, warning=FALSE, Multivariate_Plots5B}
-ggplot (top_occupations, aes(x = reorder(contbr_occupation, occ_dem_perc))) + 
- geom_bar(stat='identity', aes(y = occ_rep_amt - occ_dem_amt,
-                               fill = occ_rep_amt > occ_dem_amt) ) +
+ggplot (top_occupations, 
+        aes(x = reorder(contbr_occupation, occ_dem_perc))) + 
+  geom_bar(stat='identity', 
+           aes(y = (occ_rep_amt - occ_dem_amt) / 1E6,
+           fill = ifelse(occ_rep_perc > occ_dem_perc, 
+                        "Republican", 
+                        "Democratic") ) ) +
   scale_fill_manual(values=party_colors) +
+  scale_y_continuous(breaks = c(-1.0,  -0.5,  0.0, .5,  1.0), 
+                     labels = c( "1",  "0.5", "0", "0.5", "1") ) +
   coord_flip() +
   labs(title = "Election 2012: Difference in Contribution Amount \nTop occupations only",
-       y = "Total Contribution $  Difference - Democratic (blue) vs. Republican (red)", x = "") +
-  theme(legend.position='bottom')
+       y = "Total Contribution Difference in $ millions", 
+       x = "") +
+  theme1 +
+  theme(legend.position='bottom',
+        legend.title = element_blank())
 ```
 
-The above chart shows the differences in $ amounts of contributions by occupations. 
-Positive are Republican - Negative  are Democratic. The occupation 
-order is the same as the previous chart, Democratic favoring to Republican favoring by count.
+  The above chart shows the differences in $ amounts of contributions by occupations. 
+  Positive are Republican - Negative  are Democratic. The occupation 
+  order is the same as the previous chart, Democratic favoring to Republican 
+  favoring by count.
+  
+  A few observations:
+  
+  - The largest contribution total difference are from Professors, 
+  Attorneys, Retired, and Homemakers
+  - Fewer occupations dominate the Republican contributes 
+  while the Democratic occupations are more varied. 
+  `r sum(top_occupations$occ_rep_amt < top_occupations$occ_dem_amt )` of the 
+  `r nrow(top_occupations)` occupations have more dollars 
+  contributed to the Democratic Party.
+  - Comparing to the previous chart, the crossover from Democratic to 
+  Republican is much higher, which reflects the much larger 
+  contribution amount prevalent with the Republican party.
 
-A few observations:
+### Compare Occupations by State 
 
-- The largest contribution total difference are from Professors, Attorneys, Retired, and Homemakers
-- Fewer occupations dominate the Republican contributes while the Democratic occupations 
-are more varied. 
-`r sum(top_occupations$occ_rep_amt < top_occupations$occ_dem_amt )` of the 
-`r nrow(top_occupations)` occupations have more dollars contributed to the Democratic Party.
-- Comparing to the previous chart, the crossover from Democratic to 
-Republican is much higher, which reflects the much larger 
-contribution amount prevalent with the Republican party.
+Do retired people contribute to different parties depending on their state
+of residence? This is the kind of question we will explore next.
 
-#### Compare Occupations by State 
-
-
-```{r echo=FALSE, warning=FALSE, Multivariate_Plots5C}
+```{r fig.width=9, fig.height=7, echo=FALSE, warning=FALSE, Multivariate_Plots5C}
+campaign_gr_st_c <- campaign %>% 
+    group_by(contbr_st, party) %>%
+    summarize(count = n())
+campaign_gr_st_perc <- dcast (campaign_gr_st_c, 
+                           contbr_st ~ party, 
+                           value.var = 'count')
+campaign_gr_st_perc$dem_ratio <- campaign_gr_st_perc$Democratic /
+                                 campaign_gr_st_perc$Republican
+  
 
 # merge campaign contributions with top_occupations to limit the occupations and assign rank
-campaign_occ <- merge(campaign, top_occupations[,c('contbr_occupation','occupation_rank',
-                                                   'occ_dem_perc', 'occ_rep_perc')])
+campaign_occ <- merge(campaign, 
+                      top_occupations[,c('contbr_occupation',
+                                         'occupation_rank',
+                                         'occ_dem_perc', 
+                                         'occ_rep_perc')])
 
 # merge with state information
 campaign_occ_st <- merge(campaign_occ, 
-                         campaign_group_st[,c('contbr_st', 'swing_st',
-                                              'st_dem_perc','st_rep_perc')])
-
-# make text element for the swing states 
-x_axis_cols <- ifelse(campaign_group_st$swing_st == "Swing State", "purple", "grey")
+                         campaign_gr_st_perc[,c('contbr_st',
+                                                'dem_ratio')])
 
 # plot ordering so as to get Democratic top left and Republican bottom right
 ggplot (campaign_occ_st,
-        aes(x = reorder(contbr_st, st_rep_perc),
+        aes(x = reorder(contbr_st, -dem_ratio),
             y = reorder(contbr_occupation, -occ_rep_perc), 
-            color=party, size=contb_receipt_amt) ) +
-  geom_jitter(alpha=0.2, shape=15, position = position_jitter(height=0, width=0)) +
-  scale_color_manual(values=party_colors) +
-  labs(x = "State ordered by party - Swing state letters colored purple", 
-       y = "Occupation ordered by party",  
-       title = "Election 2012: Contribution Amounts\nRepublican (red) vs. Democratic(blue)") +
-  theme(axis.text.x = element_text(color=x_axis_cols, angle=90, vjust=0.4), 
-        panel.background = element_rect(fill='white'),
-        legend.position = 'none' ,
-        title=element_text(vjust=1.5), axis.title.x=element_text(vjust=-0.5),
-        axis.text = element_text(size = 10, lineheight = 12, face="bold"))
+            color = party, 
+            size = contb_receipt_amt) ) +
+  geom_jitter(alpha=0.2, 
+              position = position_jitter(height=0, width=0)) +
+  scale_color_manual(values = party_colors) +
+  scale_size_continuous(name = "Per contribution amount $") +
+  labs(title = "Election 2012: Contribution Amounts\nRepublican vs. Democratic",
+       x = "State ordered by party\n <-- Democratic  -  Republican -->", 
+       y = "Occupation ordered by party\n <-- Republican  -  Democratic -->" ) +
+  guides(colour = guide_legend(override.aes = list(alpha=1, size=5)),
+         size   = guide_legend(override.aes = list(alpha=0.5, size=5))) +
+  theme_x_state +
+  theme1 +
+  theme(panel.background = element_rect(fill = 'white'),
+        legend.position = 'bottom' )
 ```
+
+  This chart turned out to be not very meaningful. The intent was 
+  to chart the change in party leaning by Occupation by State. 
+  By ordering the axes this yields a predominantly blue 
+  Democratic presence top-left and red Republican presence 
+  bottom-right. The state size influences the vertical bands which 
+  distorts the information. 
+  
+  A few useful things can be seen. Retired people are heavy 
+  contributors and split equally between the parties in all states. 
+  Homemakers are clearly more likely to contribute to the Republican 
+  party regardless of state. Professors and Educators are overwhelmingly 
+  Democratic across all states, although their contributions vary in size. 
+```
+
+----
 
 # Multivariate Analysis
 
@@ -562,157 +1053,338 @@ ggplot (campaign_occ_st,
 The plots in this sectioned strengthened the idea that the size and number 
 of contributions are very different for the Republican vs. the Democratic party. 
 
-The final presidential candidate totals  tower over the other candidates. For example 
-Barack Obama total receipts are 
+The final presidential candidate totals  tower over the other candidates. 
+For example, Barack Obama total receipts are 
 `r round(sum(subset(campaign$contb_receipt_amt, campaign$cand_nm == "Obama, Barack")) / sum(subset(campaign$contb_receipt_amt, campaign$cand_nm != "Obama, Barack"  & campaign$cand_nm != "Romney, Mitt")), 1)` 
 times that of the total of all Republican candidates excluding Mitt Romney.
 
 ### Were there any interesting or surprising interactions between features?
 
-Because swing states are pivotal in the election, I expected to find evidence of this. 
-I quickly realized, however, that this can only be analyzed in the context of the state 
-itself. States vary greatly in population and in per capital income. Perhaps these factors 
-could be used in a future study to normalize the comparisons between states.
+Because swing states are pivotal in the election, 
+I expected to find evidence of this. 
+I quickly realized, however, that this can only 
+be analyzed in the context of the state 
+itself. States vary greatly in population and in 
+per capital income. Perhaps these factors 
+could be used in a future study to normalize the 
+comparisons between states.
 
-------
+----
 
 # Final Plots and Summary
 
 ### Plot ONE - How did fundraising progress for the Primary candidates?
 
-This chart explores the growth -- cumulative contributions -- by month and year 
-for the Republican participants in the presidential primary and omits the general 
-election contenders, Mitt Romney and Barack Obama. The line width indicates the 
-number (rate) of contributions. The original chart was hard to follow with colors - 
-it took quite some time to figure out how to plot the names close to the lines.
+This chart explores the growth -- cumulative contributions -- 
+by month and year for the Republican participants in the 
+presidential primary and omits the general 
+election contenders, Mitt Romney and Barack Obama. 
+The line width indicates the number (rate) of contributions. 
+The original chart was hard to follow with colors - 
+it took quite some time to figure out how to plot the names 
+close to the lines.
 
-```{r echo=FALSE, Plot_One}
-# summary by candidate to help with name plotting
-campaign_grouped_cand <- campaign_grouped_nm_ym %>%
+```{r fig.width=9, echo=FALSE, Plot_One}
+# summary by candidate to help with selection
+# skip the general electon candidates (Romney & Obama)
+# only dates up to the Republican convention (August 2012)
+primary_gr_cand <- primary_gr_nm_ym %>%
+              filter (isPrimaryCandidate(cand_nm) &
+                      isPrimaryYm(contb_receipt_ym) ) %>%
               group_by(cand_nm) %>% 
-              summarise(total_amt = max(cumsum_amt),
-                        last_dtd  =  max(max_dtd))
-campaign_grouped_cand$last_ym <- substr(campaign_grouped_cand$last_dtd, 1,7) 
+              summarise(total_amt = max(cumsum_amt)) %>%
+              arrange(desc(total_amt)) 
+              
 
-# plot cumulative for primary - name is placed with the last monthly value
-# so that it appears at the end of the line. 
-ggplot(subset(campaign_grouped_nm_ym, cand_nm!="Obama, Barack" & cand_nm!="Romney, Mitt")) +
-  theme(axis.text.x = element_text(angle=90)) +
-  geom_line(aes(x = contb_receipt_ym, y = cumsum_amt/1E6, color=cand_nm, group=cand_nm, size=count) ) +
-  geom_text(aes(x = last_ym, y=total_amt/1E6, label=cand_nm, size=700, hjust=1, vjust=-0.5, position='dodge'), 
-            data=subset(campaign_grouped_cand, cand_nm!="Obama, Barack" & cand_nm!="Romney, Mitt")) +
-  scale_color_brewer(palette="Paired") + 
-  labs(title = 'Election 2012: Cumulative Contributions for Primary Election\nLine Thickness Shows Number of Contributions', 
-       x = 'Month', y = 'Contribution in $ millions') +  
-  theme(legend.position="none", title=element_text(vjust=1.5), axis.title.x=element_text(vjust=-0.5))
+# merge the candidate names and totals with the summary by name (nm) and year-month (ym)
+# include only "interesting" primary candidates
+primary <- merge(primary_gr_cand,
+                primary_gr_nm_ym,
+                by = 'cand_nm')
+primary$Contender <- ifelse(primary$total_amt >=200000, 
+                            "Contender: $200,000 or more", 
+                            "Non-contender: under $200,000")
+# factor the name using descending total amount so the legend reads
+# largest to smallest
+primary$cand_nm  <- factor(reorder(primary$cand_nm, 
+                                 - primary$total_amt))
+
+# plot cumulative 
+ggplot(primary) +
+  geom_line(aes(x = contb_receipt_ym, 
+                y = cumsum_amt/1E6, 
+                group = cand_nm, 
+                size = count,
+                color = cand_nm ) ) +
+  facet_grid ( ~ Contender) +
+  scale_x_discrete(breaks = function (x) {breaks_yyyy_mm(x, every=6, ending_at=8)}, 
+                  labels = labels_mmm_yy) +
+  scale_y_continuous(breaks = pretty_breaks()) +
+  scale_size_continuous(name = "Monthly Contribution Count\nis line thickness") +
+  scale_color_manual(values = paired_palette,  name = "Candidate") + 
+  labs(title = 'Election 2012: Cumulative Contributions\nPrimary Election Contenders vs. Non-contenders', 
+       x = 'Month', 
+       y = 'Contribution in $ millions') +  
+  # soften the black size in the legend and make the colors thicker
+  guides(colour = guide_legend(override.aes = list(size=2)),
+         size =   guide_legend(override.aes = list(alpha=0.5))) +
+  theme1 +
+  theme (panel.margin = unit(20, "point"),
+         strip.text = element_text(size = 12),
+         legend.position = 'right')
 ```
 
-- At the lowest level, contributions for Roemer, McColter, and Johnson  never took off despite starting early in the race. 
+  This chart focuses on the Republican primary candidates 
+  who were real Contenders, raising $200,000 or more versus the 
+  Non-contenders that never made much headway. Although the $200,000
+  limit is somewhat arbitrary it does separate these groups into distinct
+  shapes.
+  
+  The very interesting pattern on the left suggests candidates
+  need a bump or surge in contributions to gain traction and stay in
+  the race.  Note that Ron Paul, the most successful, is a little different, 
+  starting early and having a more sustained climb rather than a sudden
+  burst.
+  
+  Rick Perry's rapid rise in contribution amounts 
+  from fewer contributors can be seen from the relatively thin line. 
+  This suggests he may have been fueled by wealthy 
+  contributors but unable to continue that into a sustainable 
+  contribution base as can be 
+  seen with the other long-lived candidates
+  
+  Ginrich and Santorum started later but grew steadily, 
+  leveling out a little earlier than Ron Paul. 
+  
+  Ron Paul achieed his leadership wth far smaller contributions as can be seen 
+  from the width of the line that indicates a larger number of contributions.
+  
+  It's also interesting to note that the slope of the rapid ascent period
+  is very similar for most of the candidates, until the point 
+  that they somewhat suddenly flatten.
+  
+----
 
-- Pawlenty, Bachman and Huntsman made some headway but they were never able to gain the sudden growth of the leading candidates. 
+### Plot TWO - Comparison of contribution size
 
-- Rick Perry's rapid rise in contribution amounts from fewer contributors can be 
-seen form the relatively thin line. This suggests he may have been fueled by wealthy 
-contributors but unable to continue that into a sustainable contribution base as can be 
-seen with the other long-lived candidates
+This analysis has shown that there clearly are differences in the
+size and number of contributions by party even though both parties
+collected nearly similar total amounts. These charts place this stark difference side-by-side for easy comparison.
 
-- Ginrich and Santorum started later but grew steadily, leveling out a little earlier than Ron Paul. 
-
-### Plot TWO  - Comparison of contribution size
-
-```{r echo=FALSE, Plot_Two}
+```{r fig.width=9, echo=FALSE, warning=FALSE, message=FALSE, Plot_Two}
 # make a table using summarize for the  sums and mutate for the percentages
 campaign_grouped_party <- campaign %>% 
   group_by(party, contb_receipt_amt_category) %>% 
   summarise(sum_amt = sum(contb_receipt_amt),
             count = n()) %>% 
-  mutate ('Percent of Party Total Amount' = round(100 * sum_amt / sum(sum_amt),1),
-          'Percent of Party Contribution Count' = round(100 * count   / sum(count)  ,1)) 
-campaign_grouped_party_molten <- melt(campaign_grouped_party[,c("party", "contb_receipt_amt_category", 
-                                                                "Percent of Party Total Amount", 
-                                                                "Percent of Party Contribution Count")])
-
+  mutate ('Percent of Party Total Amount' = round(100 * sum_amt / 
+                                                  sum(sum_amt),1),
+          'Percent of Party Contribution Count' = round(100 * count   / 
+                                                        sum(count)  ,1)) 
+campaign_grouped_party_molten <- 
+  melt(campaign_grouped_party[,c("party", 
+                                 "contb_receipt_amt_category", 
+                                 "Percent of Party Total Amount", 
+                                 "Percent of Party Contribution Count")])
+# plot the histogram
 ggplot(campaign_grouped_party_molten,
-              aes(x = contb_receipt_amt_category)) +
-#  geom_histogram(stat = 'identity', aes(y = value  ), color='black', alpha=0.5, width = 0.5) +
-  geom_histogram(stat = 'identity', aes(y = value, fill = party),
-                position = position_dodge()) + 
+       aes(x = contb_receipt_amt_category)) +
+  geom_histogram(aes(y = value, 
+                     fill = party),
+                 stat = 'identity',
+                 width = 0.6,
+                 position = position_dodge()) + 
   facet_wrap (~variable) +
   coord_flip() +
   scale_y_continuous(breaks=seq(0,50,10)) +
   scale_fill_manual(values = party_colors) +
-  labs(x="Contribution Category in $", y= "Percent of Party Total Contributions",
-       title="Election 2012: Contribution Amounts vs. Counts\nBy Party and Category") +
-  theme(legend.position="bottom", title=element_text(vjust=1.5), axis.title.x=element_text(vjust=-0.5))
-
-
+  labs(x ="Contribution Category in $", 
+       y = "Percent of Party Total Contributions",
+       title = "Election 2012: Contribution Amounts vs. Counts\nBy Party and Category") +
+  theme1 +
+  theme(legend.position ="bottom",
+        legend.title = element_blank(),
+        panel.margin = unit(20, "point"),
+        strip.text = element_text(size = 12))
 
 ```
 
-From the left side chart above the difference in contribution size is very clear. The Republican Party received 
-`r unlist(subset(campaign_grouped_party, party=='Republican' & contb_receipt_amt_category=='(1000,2500]', select="Percent of Party Total Amount"))` 
-percent of all funds from contributions in the range $1,000 to $2,500. By contrast the Democratic Party received only 
-`r unlist(subset(campaign_grouped_party, party=='Democratic' & contb_receipt_amt_category=='(1000,2500]', select="Percent of Party Total Amount"))` percent 
-of all contributions from that category. In addition the Democratic Party received more than 50% of all funds from contributions of $250 and under.
+  From the left side chart above the difference in contribution 
+  size is very clear. The Republican Party received 
+  `r unlist(subset(campaign_grouped_party, party=='Republican' & contb_receipt_amt_category=='(1000,2500]', select="Percent of Party Total Amount"))` 
+  percent of all funds from contributions in the range $1,000 to $2,500. 
+  By contrast the Democratic Party received only 
+  `r unlist(subset(campaign_grouped_party, party=='Democratic' & contb_receipt_amt_category=='(1000,2500]', select="Percent of Party Total Amount"))` percent 
+  of all contributions from that category. In addition the Democratic 
+  Party received more than 50% of all funds from contributions of $250 and under.
+  
+  From the right side chart, which shows the counts,  the broad base of 
+  the Democratic Party is clear. About 60%  (35% + 25%) of Democratic 
+  Contributions are $50 or under.
 
-From the right side chart, which shows the counts,  the broad base of the Democratic Party is clear. About 60%  (35% + 25%) of Democratic Contributions are $50 or under.
+----
 
 ### Plot THREE- Democratic vs. Republican Contribution Pattern
 
- The total contributions for both parties were very similar with the Republicans raising
-`r round(100*sum(subset(campaign$contb_receipt_amt, campaign$party == "Republican")) / sum(subset(campaign$contb_receipt_amt, campaign$party == "Democratic")),1)`  % of the Democratic total. 
+ The total contributions for both parties 
+ were very similar with the Republicans raising
+`r round(100*sum(subset(campaign$contb_receipt_amt, campaign$party == "Republican")) / sum(subset(campaign$contb_receipt_amt, campaign$party == "Democratic")),1)`  % of the Democratic total.
 
-Earlier exploratory charts suggested that the number and size of contributions are quite 
-different between the two parties. The chart below extends this by exploring the timing, 
-size and count of contributions for the two parties. Each contribution is plotted as a point 
-in the traditional colors of the parties - Blue for the Democrats and Red for the Republicans. 
-Choosing a very low alpha allows the distribution of the contributions to show through. Setting 
-the size to be the contribution amount ensures that the color density overall reflects the relative 
-value of each contribution. The horizontal bands are the size categories of the contribution. Time flows left to right, 
+Earlier exploratory charts suggested that the 
+number and size of contributions are quite 
+different between the two parties. The chart 
+below extends this by exploring the timing, 
+size and count of contributions for the two parties. 
+Each contribution is plotted as a point 
+in the traditional colors of the parties - Blue for the 
+Democrats and Red for the Republicans. 
+Choosing a very low alpha allows the distribution of the 
+contributions to show through. Setting 
+the size to be the contribution amount ensures that the 
+color density overall reflects the relative 
+value of each contribution. The horizontal bands are the size 
+categories of the contribution. Time flows left to right, 
 
 ```{r echo=FALSE, Plot_Three}
-# Compare amounts conntributed over time by party (excludign the green party)
-ggplot (campaign, aes(x = contb_receipt_ym, y = contb_receipt_amt_category, 
-                      color=party, size=contb_receipt_amt_category)) +
-  geom_jitter(alpha=0.02) +
-  labs(x = 'Month', y = 'Contribution Category in $',
-       title = 'Election 2012: Contribution Patterns\nRepublican (red) vs. Democratic(blue)') +
-  scale_color_manual(values=party_colors) +
-  theme(legend.position="none", title=element_text(vjust=1.5), axis.title.x=element_text(vjust=-0.5), 
-        axis.text.x = element_text(angle=90, vjust=0.4),
-        panel.background=element_rect(fill='white'))
+# Compare amounts conntributed over time by party (excluding the green party)
+ggplot (campaign, 
+        aes(x = contb_receipt_ym, 
+            y = contb_receipt_amt_category, 
+            color = party, 
+            size = contb_receipt_amt_category)) +
+  geom_jitter(alpha = 0.02) +
+  scale_color_manual(values = party_colors) +
+  scale_x_yyyy_mm +
+  labs(x = 'Month', 
+       y = 'Contribution Category in $',
+       title = 'Election 2012: Contribution Patterns\nRepublican vs. Democratic') +
+  # low alpha causes legends to fade out, so override 
+  guides(size = FALSE, 
+         color = guide_legend(override.aes = list(alpha = 1, size=6))) +
+  theme1 +
+  theme(legend.position="bottom", 
+        legend.background = element_rect( fill = 'white'),
+        legend.title = element_blank(),
+        panel.background=element_blank())
 ```
 
 
-This chart is quite striking and describes the differences between the Democratic and 
-Republican fund raising. There are a few clear patterns:
+  This chart is quite striking and describes the differences between 
+  the Democratic and 
+  Republican fund raising. There are a few clear patterns:
+  
+  - Republicans make more donations above $250 and clearly lead 
+  the $1000 - $2500 category. 
+  
+  - Democratic  contributions start earlier and seem more dominant in 
+  the earlier stages except perhaps for December 2011 and January 2012. 
+  This earlier start is curious since there was no primary competition 
+  for the Democratic nomination.
+  
+  - The number of contributions in the few months before 
+  the election in November, is dominated by Democrats, as can be seen 
+  by the intense blue in May, June and July 2012.
+  
+  - In October, one month before the election,  Republicans 
+  seem to suddenly increase the number and size of their contributions as 
+  can be seen from the intense red.
 
-- Republicans make more donations above $250 and clearly lead the $1000 - $2500 category. 
-
-- Democratic  contributions start earlier and seem more dominant in the earlier stages except perhaps for December 2011 and January 2012. This earlier start is curious since there was no primary competition for the Democratic nomination.
-
-- The number of contributions in the few months before the election in November, is 
-dominated by Democrats, as can be seen by the intense blue in May, June and July 2012.
-
-- In October, one month before the election,  Republicans seem to suddenly increase 
-the number and size of their contributions as can be seen from the intense red.
-
-------
+----
 
 # Reflection
 
-This analysis took longer than expected because I felt compelled too look at many angles. 
-In doing so I learned many aspects of R and ggplot that I otherwise wouldn't have.
+This analysis took longer than expected because I felt compelled 
+too look at many angles. 
+In doing so I learned many aspects of R and ggplot 
+that I otherwise wouldn't have.
 
+### Struggles
 
-Sampling has precluded analysis by employer or individual - It may be interesting to 
-see if there are individuals that give to multiple candidates or employers with a concentration of contributions. 
+- **Dataset size -** The size of the complete data set, as warned by our instructors,  slowed down the analysis, but it progressed more quickly once a sampling approach was taken. After a few samples matched the overall distribution well, the analysis proceeded with a 5% sample. (See the data munging document for details).
 
-Further analysis for swing states may be interesting, relating contributions to population and income.
+- **stats and ggplot -** I struggled with the use of stats with ggplot, and some review of those are definitely needed. However, in the later stage I used the dplyer  group_by, summarize "pipeline". Creating a result set
+with the dplyr functions makes it much easier to verify the results
+in table form before before plotting. Sums and totals can be checked 
+interactively.
 
-In this election year, the Citizen's United decision cleared the way for much money 
-to be contributed by corporations to PAC's and Super PACS (political action committee's), 
+- **Raw dataset -** As warned by the instructors, figuring out the differences in the raw data took time, but was still interesting. 
+
+### Lessons Learned
+
+- **Perpetual tweaking - **"All results are interpretive so I found a continuous need to explore further. The results seemed that they could be refined and code could be continuously improved. Similarly, continuously tweaking the plots to adjust for minor formatting is very time-consuming, but essential to achieving visual clarity and simplicity.
+
+- **Dates in many formats -**
+  The usage of dates as months proved to be somewhat messy and I am not very comfortable with the end result. Most of the manipulation of dates is by month, which was represented as a yyyy-mm string, for example, '2012-08'. Although this worked reasonably well, it is treated as a factor and none of the
+  specific continuous date scales can be used. In order to compare dates and use date scales, I assigned the first day of the month and used lubridate ymd function to create dates of type POSIXct. However, the first day of the month, such as "2012-08-01", which is really "2012-08-01 00:00:00 UTC" results in "2012-07-31 19:00:00" when used by the date scale functions which operate in local timezone.
+  
+    This can be seen in
+    ```{r echo=TRUE}
+       library(lubridate)
+       strftime(ymd(paste("2012-08","01", sep="-")), "%F") 
+    ```
+  
+    This was resolved by setting the date to the fifteenth of the month,
+    which may be better because then the values align at about the 
+    middle of the   month on the continuous scales. 
+    
+    It seems that almost every language I know has multiple 
+    date manipulation
+    libraries each with drawbacks and none having really solved all the 
+    problems with dates.
+
+### Successes
+
+- **Broadbased contributions -**There is clear evidence in this data of the broader-base of contributions to the Democratic Party. While I understood this broadly I didn't know that this holds across almost every state.
+
+- **Primary candidates -**The shapes of the contributions in the primary period, as shown in Plot 1, is particularly revealing. This certainly suggests that success in the primary could be predicted from the rate and size of contributions.
+
+- **Occupation -**The variation by occupation is particularly interesting because this 
+invokes a whole set of different personal questions such as:
+Why do most writers contribute small amounts to the Democratic Party?
+
+### Data restrictions, limitations
+
+- **Sampling -**  Using a sample has precluded analysis by employer or individual and has limited the extent of analysis by occupation. It's possible that some of the state-specific counts by occupation may be very small in the sampled set and hence invalid. 
+
+- **Business  contributions -** These contributions, with higher limits, were excluded to simplify and focus the analysis. 
+
+- **Spousal contributions -** The data set includes transactions that exceed $2,500 and corresponding "transfers from spouse". This analysis does not handle these properly. 
+
+- **Returns -** Campaign returns are excluded completely. We did estimate that returns only made up about 3% of the data set so the error of including a contribution but omitting the return in this 5% sample is ~ 3% * 5% = 0.15%
+
+### Further Analysis
+
+Key areas that could be pursued are:
+
+- **Swing States -** Further analysis for swing states may be interesting, 
+  relating contributions to population and income.
+
+- **Business contributions -** Company contributions and contributions 
+  by employees  may be very significant in total.
+  It would be interesting to find employers with heavy 
+  pockets of contributions.
+  
+- **Contributions to multiple candidates -**Do people contribute to
+  the candidate they believe in or do they contribute to multiple candidates?
+
+- **Swing states -**Further analysis of swing states will require 
+eliminating the effect of state population. I would be interested 
+in finding occupational differences in swing states that may indicate 
+sets of people that become more active, the closer the race.
+
+### Broader Meaning
+
+In the 2012 election year, the Citizen's United 
+decision cleared the way for much money 
+to be contributed by corporations to PAC's and 
+Super PACS (political action committee's), 
 so this analysis only covers a small 
 portion of the money involved in presidential elections.
 
-Overall this analysis has reinforced the idea that the Democratic Party is more broadly based relying on smaller contributions from a broader base than the Republican Party. 
+Overall this analysis has reinforced the idea that the 
+Democratic Party is more broadly based relying on 
+smaller contributions from a broader base than the Republican Party. 
+
+
+
+-----

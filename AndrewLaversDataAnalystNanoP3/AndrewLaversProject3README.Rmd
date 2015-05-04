@@ -1,0 +1,138 @@
+Notes on re-submission - Andrew Lavers
+======================================
+
+Thanks for the detailed review. Here is a summary of the changes made 
+for re-submission. 
+
+I believe I have addressed every item raised and made a number of  improvements setting "Exceeds" as my goal.
+
+### General code improvements
+
+- Line wrap and parameter indentation applied throughout.
+
+- Added reusable functions for scale and themes for 
+  consistency of date and state axes.
+  These apply consistent font size , vjust, angle, etc.  
+
+### Data changes
+
+- Corrected a month-boundary issue related to lubridate timezone differences. 
+
+	In the original submission, the code forces a date type for monthly data 
+  using the first of the month. For 
+	example, the code appends "-01" to  "2012-02" and then executes 
+	lubridate's ymd("2012-02-01") to yield a POSIX date object, which 
+	default to UTC time. Later, when using the dates, it assumed my 
+	local time (EST) and moved the times a few hours early, landing on the last 
+	day of the previous month. The revised code uses "2012-02-15",
+	the fifteenth (midpoint) of the month. 
+	This also positions better visually in the middle of the month on a 
+	plot against a continuous date axis. While the POSIX date types are better,
+	ggplot can't use them directly so casting to Date was still required.
+
+
+
+- Limited the analysis up to November 2012, the election month. 
+  There are some lingering
+  contributions in December that distort the analysis needlessly.  
+
+### Cosmetic/text changes
+
+- Increased markdown figure sizing to better show state plots
+
+- Introductory sentences, headers and dividers
+
+    For each chart, added consistent headings and introductory 
+    sentences to improve  the flow and transitions. Included separating 
+    lines.
+
+- Improved axis titles and legends paying attention to simplicity. 
+
+   For Example, 
+    a legend title of "Swing State" isn't needed when the two values 
+    are "Swing State" and "Non-swing State"
+
+- Low-alpha and thin lines/small dots in legends
+
+    Alpha is applied to legends as well,which caused 
+    faded-out legends. This is why I excluded 
+    legends on some of the scatter plots in the
+    original version. In the legend for line charts 
+    with many colors it is difficult to discern the 
+    legend color with thin lines. This was 
+    solved with
+
+    >>guides(size = FALSE, color = guide_legend(override.aes = list(alpha = 1, size=6)))
+
+- State axis labels. Used expand (0,0) in some cases to 
+    get better looking state axes by placing the state name on the axis up 
+    against the bottom of the bar.
+
+
+### Chart changes
+
+#### Bivariate plots
+
+- Chart of "Total Contribution Amount by State" - Bivariate_Plots6
+
+	Calculations were incorrect. The revised version uses 
+  dplyer group_by, summarize before plotting.
+
+-  "Contributions by Candidate" - Bivariate_Plots7
+
+	Reordered high to low.
+
+- "Total Contributions by Candidate" - Bivariate_Plots8
+
+	Calculated with dplyer and reordered high to low
+
+#### Multi-variate
+
+- First plot. "Categorized Contribution Amounts by Category/Month" - Multivariate_Plots1
+
+   This is completely revised to be simpler and there are more meaningful conclusions. 
+   dplyer is used for summaries.
+
+- "Cumulative Contribution Amounts for Primary Election" - Multivariate_Plots2
+
+	 Adjusted axis for $millions
+
+- "Means and Median Contribution by State" - Multivariate_Plots4
+
+  This is substantially revised to provide a simplified, faceted chart 
+  rather than overloading too much on one display. 
+  Also, I figured out how to show the multiple legends.
+
+- "Election 2012: Difference in Contribution Amount" - Multivariate_Plots5B 
+
+	Improved the legend, axis percent labels and eliminated the negative 
+	signs on the left hand side. 
+
+- "Election 2012: Contribution Amounts\nRepublican vs. Democratic" Multivariate_Plots5C
+
+	I originally provided no observations because this was a dead-end 
+	with not much value. In this version I adjusted the calculations, changed 
+	the shapes and added an explanation and conclusions. 
+
+#### Final Plots 
+
+- First plot "Election 2012: Cumulative Contributions\nPrimary Election Contenders" - Plot_One. 
+
+  The review comments were very helpful to better focus this chart. 
+  By separating "non-contenders", candidates that never really 
+  showed any gains, the chart now tells a better story about the real 
+  primary contenders and common patterns are evident. Combined with improved 
+  legend color, size, and ordering tweaks, the story is now quite clear. 
+
+- Third plot "Election 2012: Contribution Patterns" Plot_Three 
+
+	Added legend with guide tweaks to override alpha and increase dot 
+  size in the legend
+  
+  
+#### Reflections
+
+After reviewing the rubric, I have substantially improved this section.
+ 
+ 
+
